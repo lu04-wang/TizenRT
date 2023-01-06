@@ -73,12 +73,14 @@ typedef struct {
 typedef void(*ble_client_device_disconnected_cb)(ble_client_ctx *ctx);
 typedef void(*ble_client_device_connected_cb)(ble_client_ctx *ctx, ble_device_connected* connected_device);
 typedef void(*ble_client_operation_notification_cb)(ble_client_ctx *ctx, ble_attr_handle attr_handle, ble_data* read_result);
+typedef void (*ble_client_operation_indication_cb)(ble_client_ctx *ctx, ble_attr_handle attr_handle, ble_data* read_result);
 
 typedef struct {
 	/* This is a set of callback function for BLE client */
 	ble_client_device_disconnected_cb disconnected_cb;
 	ble_client_device_connected_cb connected_cb;
 	ble_client_operation_notification_cb notification_cb;
+	ble_client_operation_indication_cb indication_cb;
 } ble_client_callback_list;
 
 ble_client_ctx *ble_client_create_ctx(ble_client_callback_list *callbacks);
@@ -170,6 +172,8 @@ ble_result_e ble_client_connected_info(ble_client_ctx *ctx, ble_device_connected
 
 /****************************************************************************
  * Name: ble_client_operation_enable_notification
+ *       ble_client_operation_enable_indication
+ *       ble_client_operation_enable_notification_and_indication
  *
  * Description:
  *   Enable the notification coming from the Server(Peripheral).
@@ -184,6 +188,8 @@ ble_result_e ble_client_connected_info(ble_client_ctx *ctx, ble_device_connected
  *
  ****************************************************************************/
 ble_result_e ble_client_operation_enable_notification(ble_client_ctx *ctx, ble_attr_handle attr_handle);
+ble_result_e ble_client_operation_enable_indication(ble_client_ctx *ctx, ble_attr_handle attr_handle);
+ble_result_e ble_client_operation_enable_notification_and_indication(ble_client_ctx *ctx, ble_attr_handle attr_handle);
 
 /****************************************************************************
  * Name: ble_client_operation_read

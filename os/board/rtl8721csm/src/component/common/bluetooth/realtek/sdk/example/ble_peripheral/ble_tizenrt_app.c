@@ -97,6 +97,24 @@ int ble_tizenrt_app_handle_upstream_msg(uint16_t subtype, void *pdata)
             }
         }
 			break;
+		case BLE_TIZENRT_MSG_INDICATE:
+        {
+            T_TIZENRT_INDICATE_PARAM *param = pdata;
+            if(param)
+            {
+                debug_print("conn_id %d abs_handle 0x%x data %p \n",
+                                            param->conn_id, param->att_handle, param->data);
+                if(tizenrt_ble_service_send_indicate(param->conn_id, param->att_handle, param->data, param->len))
+                    debug_print("success : subtype = 0x%x \n", subtype);
+                else
+                    debug_print("fail : subtype = 0x%x \n", subtype);
+                os_mem_free(param->data);
+                os_mem_free(param);
+            } else {
+                debug_print("Notify parameter is NULL \n");
+            }
+        }
+			break;
         case BLE_TIZENRT_MSG_DELETE_BOND:
         {
             T_TIZENRT_SERVER_DELETE_BOND_PARAM *param = pdata;
@@ -184,6 +202,9 @@ void ble_tizenrt_app_handle_io_msg(T_IO_MSG io_msg)
 }
 
 extern trble_server_init_config server_init_parm;
+#if defined(CONFIG_BLE_INDICATION)
+extern void *ble_tizenrt_indicate_sem;
+#endif
 void  ble_tizenrt_handle_callback_msg(T_TIZENRT_APP_CALLBACK_MSG callback_msg)
 {
     debug_print("msg type: 0x%x \n", callback_msg.type);
@@ -200,12 +221,20 @@ void  ble_tizenrt_handle_callback_msg(T_TIZENRT_APP_CALLBACK_MSG callback_msg)
                                 connected->remote_bd[3], connected->remote_bd[4], connected->remote_bd[5]);
                 trble_server_connected_t p_func = server_init_parm.connected_cb;
                 p_func(connected->conn_id, connected->conn_type, connected->remote_bd);
+#if defined(CONFIG_BLE_INDICATION)
+                if(connected->conn_type == TRBLE_SERVER_DISCONNECTED){
+                    if(ble_tizenrt_indicate_sem != NULL)
+                    {
+                        os_mutex_give(ble_tizenrt_indicate_sem);
+                    }
+                }
+#endif
             } else {
                 debug_print("NULL connected callback \n");
             }
             os_mem_free(connected);
         }
-		    break;
+            break;
         case BLE_TIZENRT_CALLBACK_TYPE_PROFILE:
         {
             T_TIZENRT_PROFILE_CALLBACK_DATA *profile = callback_msg.u.buf;
@@ -678,6 +707,14 @@ T_APP_RESULT ble_tizenrt_app_profile_callback(T_SERVER_ID service_id, void *p_da
             {
                 dbg("PROFILE_EVT_SEND_DATA_COMPLETE failed \n");
             }
+#if defined(CONFIG_BLE_INDICATION)
+            if(os_mutex_give(ble_tizenrt_indicate_sem))
+            {
+                dbg("give indicate semaphore success \n");
+            } else {
+                dbg("fail to give indicate semaphore \n");
+            }
+#endif
             break;
 
         default:

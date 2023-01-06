@@ -117,6 +117,9 @@ ble_result_e ble_server_get_profile_count(uint16_t *count);
 // API for sending a characteristic value notification to the selected target(s). (notify to all clients conn_handle (notify all = 0x99))
 ble_result_e ble_server_charact_notify(ble_attr_handle attr_handle, ble_conn_handle con_handle, ble_data *data);
 
+// API for sending a characteristic value indication to the selected target(s). (notify to all clients conn_handle (notify all = 0x99))
+ble_result_e ble_server_charact_indicate(ble_attr_handle attr_handle, ble_conn_handle con_handle, ble_data *data);
+
 // set data of attribute value
 ble_result_e ble_server_attr_set_data(ble_attr_handle attr_handle, ble_data *data);
 
@@ -144,6 +147,14 @@ The random delay is a pseudo-random value from 0ms to 10ms that is automatically
 This randomness helps reduce the possibility of collisions between advertisements of different devices
 */
 ble_result_e ble_server_set_adv_interval(unsigned int interval);
+
+/* Set tx power for advertising
+   Arguement txpower: 
+			0x00(-9dBm) ~ 0x31(15.5dBm) 
+			step : 0.5dBm
+			tested value: 0x06, 0x1A, 0x26
+*/
+ble_result_e ble_server_set_adv_tx_power(uint8_t txpower);
 
 ble_result_e ble_server_start_adv(void);
 ble_result_e ble_server_stop_adv(void);

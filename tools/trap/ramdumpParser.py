@@ -57,7 +57,6 @@ CONFIG_PATH = '../../os/.config'
 MAKEFILE_PATH = '../../os/Make.defs'
 HEAPINFO_PATH = '../../os/include/tinyara/mm/heapinfo_internal.h'
 BIN_ADDR_FXN = 'elf_show_all_bin_section_addr'
-debug_cmd = 'addr2line'
 file_data = 'HeapInfo'
 
 # Top level class to parse the dump and assert logs parsing feature
@@ -72,12 +71,9 @@ class dumpParser:
 			self.pc = pc
 
 	# Init function for dumpParser Class
-	def __init__(self, dump_file=None, elf=None, gdb_path=None, nm_path=None, readelf_path=None, log_file=None, debug=False):
+	def __init__(self, dump_file=None, elf=None, log_file=None, debug=False):
 		self.dump_file=dump_file		# dump file
 		self.elf=elf				# Elf file
-		self.gdb_path=gdb_path			# Path of GDB tool
-		self.nm_path=nm_path			# Path of NM tool
-		self.readelf_path=readelf_path		# Path of readelf tool
 		self.log_file=log_file			# Path of Log file passed as argument
 		self.symbol_lookup_table = []		# Lookup table to store key(addr) value(symbol) from elf
 		self.stack_table = []			# Lookup table created from stack contents of assert log file
@@ -113,7 +109,7 @@ class dumpParser:
 		# Read the elf header to get the offset of text section and ARM exidx section
 		# These offsets will be used while creating ARM exidx table as well as while reading
 		# the address from ELF file at a particular text address
-		with os.popen(self.readelf_path + ' -S ' + elf) as readelf_fd:
+		with os.popen('arm-none-eabi-readelf -S ' + elf) as readelf_fd:
 			elfdata = readelf_fd.readlines()
 			for line in elfdata:
 				if '.text' in line:
@@ -265,7 +261,7 @@ class dumpParser:
 	# Function to setup the Address to Symbol mapping table from the ELF file ( tinyara in our case)
 	def setup_symbol_table(self,tinyara_elf_file, debug=False):
 		# Reading the tinyara elf and preparing the symbol map table
-		with os.popen(self.nm_path + ' -n ' + tinyara_elf_file) as elf_file_fd_nm:
+		with os.popen('arm-none-eabi-nm -n ' + tinyara_elf_file) as elf_file_fd_nm:
 			symbols = elf_file_fd_nm.readlines()
 			for line in symbols:
 				s = line.split(' ')
@@ -478,7 +474,7 @@ class dumpParser:
 				symname, offset = r # Update both symbol name and offset
 
 			address = '{0:x}'.format(frame.pc)
-			cmd = ['addr2line', '-e', self.elf, address]
+			cmd = ['arm-none-eabi-addr2line -e', self.elf, address]
 			fd_popen = subprocess.Popen(cmd, stdout=subprocess.PIPE).stdout
 			data = fd_popen.read().decode()
 			temp = data.split('/')[-1]
@@ -528,9 +524,9 @@ def print_crash_type(string):
     else:
         print('\n2. Crash type               : etc')
     if (crash_type_assert == True):
-        print('\n3. Crash point              :', string)
+        print('\n3. Crash point\n\t- ', string)
     else:
-        print('   Crash log                :', string)
+        print('   Crash log\n\t-', string)
 
 # Function to get the number of application binaries, names, text address and sizes
 def find_number_of_binaries(log_file):
@@ -572,11 +568,13 @@ def find_crash_point(log_file, elf):
     global g_assertpc
     global g_stext_app
     global g_etext_app
+    global crash_type_assert
     app_idx = 0
     pc_value = 0
     lr_value = 0
     is_app_crash = 0
     is_kernel_crash = 0
+    is_interrupt_mode = 0
     assertline = ""
 
     # Parse the contents based on tokens in log file.
@@ -775,9 +773,74 @@ def find_crash_point(log_file, elf):
                     # If PC value is invalid, show invalid PC
                     if 'PC value might be invalid' in line:
                         print('\tPC value might be invalid.')
-            print('\tPC & LR values not in any text range! No probable crash point detected.')
+            print('\t-  PC & LR values not in any text range! No probable crash point detected.')
 
-    print('\n4. Call stack of last run thread\n')
+    with open(log_file) as searchfile:
+        for line in searchfile:
+            if 'ERROR: Stack pointer is not within any of the allocated stack' in line:
+                word = line.split(':')
+                print('\n\t-', word[1], ':', word[2])
+
+    # Parse the contents based on tokens in log file to determine point of assertion in details
+    with open(log_file) as searchfile:
+        found_type = 0
+        for line in searchfile:
+            if 'Code asserted in nested IRQ state!' in line:
+                found_type = 1
+                print('\n\t- Code asserted in Nested IRQ state.')
+                break
+            elif 'Code asserted in IRQ state!' in line:
+                found_type = 1
+                print('\n\t- Code asserted in IRQ state.')
+                break
+            elif 'Running work function is' in line:
+                found_type = 1
+                print('\n\t- Code asserted in workqueue.')
+                break
+        if (found_type == 0):
+                print('\n\t- Code asserted in normal thread.')
+
+    # Parse the contents based on tokens in log file for assert during interrupt context
+    with open(log_file) as searchfile:
+        for line in searchfile:
+            # Print the interrupt data during crash (if crashed during interrupt context)
+            if 'IRQ num:' in line:
+                word = line.split(' ')
+                # Last word[-1] contains the interrupt number
+                irq_num = word[-1]
+                print('\n\t- Interrupt number\t\t:',irq_num)
+            if 'Code asserted in IRQ state!' in line:
+                is_interrupt_mode = 1
+                # It displays the interrupt handler information corresponding to the Interrupt
+                # The last argument to debugsymbolviewer specifies whether or not to check for interrupt handler address (4)
+                print("\n4. Assertion Data during interrupt mode:\n")
+                print('- Interrupt handler at addr\t\tSymbol_name')
+                os.system("python3 ../debug/debugsymbolviewer.py " + log_file + " " + str(g_app_idx) + " 4")
+    with open(log_file) as searchfile:
+        for line in searchfile:
+            if 'Nested IRQ stack:' in line:
+                is_interrupt_mode = 2
+                print("- IRQ Stack information:\n")
+            if (is_interrupt_mode >= 2 and is_interrupt_mode < 9):
+                is_interrupt_mode = is_interrupt_mode + 1
+                print("\033[F", line)
+
+    if (is_interrupt_mode):
+        print('\n5. Call stack of last run thread')
+    else:
+        print('\n4. Call stack of last run thread')
+
+    # Parse the contents based on tokens in log file for memory allocation failure data
+    with open(log_file) as searchfile:
+        mm_fail = 0
+        for line in searchfile:
+            # Print the mm allocation failure data during crash (if crashed during mm allocation)
+            if ('mm_manage_alloc_fail:' in line) and (mm_fail == 0):
+                print('\nMemory allocation failure logs are as below:')
+                mm_fail = 1
+            if (mm_fail == 1):
+                print(line)
+
     # Parse the contents based on tokens in log file.
     with open(log_file) as searchfile:
         for line in searchfile:
@@ -803,9 +866,10 @@ def find_crash_point(log_file, elf):
     print('\nStack_address\t Symbol_address\t Symbol location  Symbol_name\t\tFile_name')
     os.system("python3 ../debug/debugsymbolviewer.py " + log_file + " " + str(g_app_idx) + " 0")
 
-    print('\n5. Miscellaneous information:')
-    # Parse the contents based on tokens in log file for heap corruption
+    print('\nx. Miscellaneous information:')
+
     with open(log_file) as searchfile:
+    # Parse the contents based on tokens in log file for heap corruption
         heap_corr = 0
         for line in searchfile:
             # Print the heap corruption data (if any)
@@ -838,17 +902,21 @@ def format_log_file(log_file):
 	with open(log_file, "r") as f:
 		data = f.readlines()
 	with open(log_file, "w") as f:
+		assertinlog = False #Truncate logs only if assert has occured. For other type of crashes, no need to truncate
 		trunc = True # False if log line is to be retained, True otherwise
 		for line in data:
-			# Truncate logs after first crash dump: up_assert
-			if ('up_assert: Assertion failed at file:' in line) and (trunc == False):
-				break
-			# Truncate logs before first crash dump: up_assert
-			if 'up_assert: Assertion failed at file:' in line:
-				trunc = False
-			if trunc:
-				# Do not write line and move to the next line
-				continue
+			if 'up_assert: ' in line:
+				assertinlog = True
+			if assertinlog:
+				# Truncate logs after first crash dump: up_assert
+				if ('up_assert: Assertion failed at file:' in line) and (trunc == False):
+					break
+				# Truncate logs before first crash dump: up_assert
+				if 'up_assert: Assertion failed at file:' in line:
+					trunc = False
+				if trunc:
+					# Do not write line and move to the next line
+					continue
 
 			delete_idx = 0
 			# Timestamp present if line starts with '['
@@ -886,17 +954,14 @@ def usage():
 	print('Following options are available')
 	print('\t-r, --dump_file                 RAM/FLASH dump_file along with path')
 	print('\t-t, --log_file                  Enter Logfile which contains stackdump during assert')
-	print('\t-G, --gdb_path                  Enter gdb tool path')
-	print('\t-N, --nm_path                   Enter nm tool path')
-	print('\t-E, --readelf_path              Enter readelf tool path')
+	print('\t-b, --bin_path                  Enter binary folder path other than default binary')
+	print('\t-c, --config_Path               Enter configuration file path for above binary')
+	print('\t-e, --elf_path                  Enter kernel elf file name')
 	print('\t-h, --help                      Show help')
 	print('')
 	print('syntax :')
 	print('--------')
-	print('python3 %s -r Filename_ramBaseAddr_ramEndAddr.bin -G <Gdb path> -N < NM path> ' % sys.argv[0])
-	print('')
-	print('I assume, gdb and nm tool exist in your linux machine like /usr/bin/gdb and /usr/bin/nm, so hard coded this path inside script')
-	print('')
+	print('python3 %s -r Filename_ramBaseAddr_ramEndAddr.bin' % sys.argv[0])
 	print('Below example if you give dump file as path: ')
 	print('--------------------------------------------')
 	print('python3 ramdumpParser.py -r build/output/bin/ramdump_0x4a0000_0x6a0000.bin')
@@ -905,14 +970,16 @@ def usage():
 	print('---------------------------------------------------------')
 	print('python3 ramdumpParser.py -r log.txt ')
 	print('')
+	print('Below example if you give binary file other than default as path: ')
+	print('---------------------------------------------------------')
+	print('python3 ramdumpParser.py -r log.txt -b ../../os/vidisha/bin/ -c ../../os/cfile -e tinayara.axf')
+	print('')
 	print('')
 	print('Note:')
 	print('--------')
 	print('1) For getting call stack CONFIG_FRAME_POINTER flag should be enabled in your build')
 	print('')
-	print('If you do not have gdb and nm path set, please pass the path as below')
-	print('')
-	print('python3 ramdumpParser.py -r /build/bin/ramdump_0x4a0000_0x6a0000.bin -G <your_gdb_path> -N <your_nm_path>')
+	print('python3 ramdumpParser.py -r /build/bin/ramdump_0x4a0000_0x6a0000.bin')
 	print('')
 	print('')
 	print('*************************************************************')
@@ -920,20 +987,20 @@ def usage():
 	sys.exit(1)
 
 def main():
+	global BIN_PATH
+	global CONFIG_PATH
 	dump_file = None
 	log_file = None
 	elf = None
+	elf_path = None
 	framePointer = 0
 	stackPointer = 0
 	programCounter = 0
 	stackSize = 0
 	have_ram_kernel_text = False
-	gdb_path='/usr/bin/gdb'
-	nm_path='/usr/bin/nm'
-	readelf_path='/usr/bin/readelf'
 
 	try:
-		opts, args = GetOpt(sys.argv[1:],'r:e:G:N:d:t:g:h', ['dump_file=','gdb_path=','nm_path=','readelf_path=','log_file=','help'])
+            opts, args = GetOpt(sys.argv[1:],'r:t:b:c:e:h', ['dump_file=','log_file=','bin_path=','config_path=','elf_path=','help'])
 	except GetoptError as e:
 		print(' ')
 		print(' ')
@@ -944,51 +1011,43 @@ def main():
 	for opt, arg in opts:
 		if opt in ('-r', '--dump_file'):
 			dump_file = arg
-		elif opt in ('-G', '--gdb_path'):
-			gdb_path = arg
-		elif opt in ('-N', '--nm_path'):
-			nm_path = arg
-		elif opt in ('-E', '--readelf_path'):
-			readelf_path = arg
 		elif opt in ('-t', '--log_file'):
 			log_file = arg
+		elif opt in ('-b', '--bin_path'):
+			bin_path = arg
+			BIN_PATH = bin_path
+		elif opt in ('-c', '--config_path'):
+			config_path = arg
+			CONFIG_PATH = config_path
+		elif opt in ('-e', '--elf_ext'):
+			elf_path = arg
 		elif opt in ('-h', '--help'):
 			usage()
 
-	# Read tinyara extension from Make.defs
-	with open(MAKEFILE_PATH, 'r') as fd:
-		lines = fd.readlines()
-		for line in lines:
-			if 'EXEEXT =' in line:
-				ext = (line.split("=")[1].strip())
-	elf = (BIN_PATH + 'tinyara' + ext)
+	if not elf_path:
+		# Read tinyara extension from Make.defs
+		with open(MAKEFILE_PATH, 'r') as fd:
+			lines = fd.readlines()
+			for line in lines:
+				if 'EXEEXT =' in line:
+					ext = (line.split("=")[1].strip())
+		elf = (BIN_PATH + 'tinyara' + ext)
+	else:
+		elf = BIN_PATH + elf_path
 
 	if not log_file and not dump_file:
 		print('Usage error: Must specify one of the -t or -e options. Plz find below for proper usage')
 		usage()
 
-	access_check_list = [
-		("gdb", gdb_path),
-		("nm", nm_path),
-		("readelf", readelf_path)
-	]
-
 	exist_check_list = [
 		("dump_file", dump_file),
 		("log_file", log_file),
 		("elf", elf)
-	] + access_check_list
+	]
 
 	for name, path in exist_check_list:
 		if path and not os.path.exists(path):
 			print(f"{path} does not exist. Please provide the proper path for {name}...")
-			sys.exit(1)
-
-	for name, path in access_check_list:
-		if not os.access(path, os.X_OK):
-			print(f"!!! No execute permissions on {name} path {path}")
-			print("!!! Please check the path settings")
-			print("!!! If this tool is being run from a shared location, contact the maintainer")
 			sys.exit(1)
 
 	# Format log file if timestamp is present at the start of each line
@@ -1022,7 +1081,7 @@ def main():
 			have_ram_kernel_text = True
 
 		# Calling the Constructor with the initial set of arguments
-		rParser = dumpParser(dump_file=dump_file,elf=elf,gdb_path=gdb_path,nm_path=nm_path,readelf_path=readelf_path,log_file=log_file, debug=False)
+		rParser = dumpParser(dump_file=dump_file,elf=elf,log_file=log_file, debug=False)
 
 
 		# Setup the Symbol table lookup with given System.map file
@@ -1219,7 +1278,7 @@ def main():
 			owner = rParser.read_word(point + 8)
 			pid = rParser.read_halfword(point + 12)
 			if preceding & MM_ALLOC_BIT :
-				fd_popen = subprocess.Popen([debug_cmd, '-e', elf, hex(owner)], stdout=subprocess.PIPE).stdout
+				fd_popen = subprocess.Popen(['arm-none-eabi-addr2line -e', elf, hex(owner)], stdout=subprocess.PIPE).stdout
 				data = fd_popen.read().decode()
 				fd_popen.close()
 				if pid >= 0:

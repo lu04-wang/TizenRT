@@ -264,13 +264,13 @@ typedef size_t mmaddress_t;             /* 32 bit address space */
  */
 
 struct mm_allocnode_s {
-	mmsize_t size;					/* Size of this chunk */
 	mmsize_t preceding;				/* Size of the preceding chunk */
 #ifdef CONFIG_DEBUG_MM_HEAPINFO
 	mmaddress_t alloc_call_addr;			/* malloc call address */
 	pid_t pid;					/* PID info */
 	uint16_t reserved;				/* Reserved for future use. */
 #endif
+	mmsize_t size;					/* Size of this chunk */
 
 };
 
@@ -302,8 +302,13 @@ struct mm_allocnode_s {
 /* This describes a free chunk */
 
 struct mm_freenode_s {
-	mmsize_t size;				/* Size of this chunk */
 	mmsize_t preceding;			/* Size of the preceding chunk */
+#ifdef CONFIG_DEBUG_MM_HEAPINFO
+	mmaddress_t alloc_call_addr;			/* malloc call address */
+	pid_t pid;					/* PID info */
+	uint16_t reserved;				/* Reserved for future use. */
+#endif
+	mmsize_t size;				/* Size of this chunk */
 	FAR struct mm_freenode_s *flink;	/* Supports a doubly linked list */
 	FAR struct mm_freenode_s *blink;
 };
@@ -311,12 +316,7 @@ struct mm_freenode_s {
 /* What is the size of the freenode? */
 
 #define MM_PTR_SIZE sizeof(FAR struct mm_freenode_s *)
-#ifdef CONFIG_DEBUG_MM_HEAPINFO
-#define SIZEOF_MM_FREENODE \
-	(SIZEOF_MM_ALLOCNODE - SIZEOF_MM_MALLOC_DEBUG_INFO + 2 * MM_PTR_SIZE)
-#else
 #define SIZEOF_MM_FREENODE (SIZEOF_MM_ALLOCNODE + 2 * MM_PTR_SIZE)
-#endif
 
 #define CHECK_FREENODE_SIZE \
 	DEBUGASSERT(sizeof(struct mm_freenode_s) == SIZEOF_MM_FREENODE)
@@ -342,8 +342,8 @@ struct heapinfo_group_s {
 	int stack_size;
 	int heap_size;
 };
-#endif
 
+#endif
 #ifdef CONFIG_HEAPINFO_USER_GROUP
 extern int heapinfo_max_group;
 extern struct heapinfo_group_s heapinfo_group[HEAPINFO_USER_GROUP_NUM];
@@ -351,6 +351,12 @@ extern struct heapinfo_group_info_s group_info[HEAPINFO_THREAD_NUM];
 #endif
 
 #endif
+
+struct mm_alloc_fail_s {
+	uint32_t size;
+	uint32_t caller;
+};
+
 /* This describes one heap (possibly with multiple regions) */
 
 struct mm_heap_s {
@@ -729,6 +735,16 @@ int mm_check_heap_corruption(struct mm_heap_s *heap);
 
 /* Function to manage the memory allocation failure case. */
 #if defined(CONFIG_APP_BINARY_SEPARATION) && !defined(__KERNEL__)
+#ifdef CONFIG_DEBUG_MM_HEAPINFO
+void mm_ioctl_alloc_fail(size_t size, uint32_t caller);
+#define mm_manage_alloc_fail(h, b, e, s, t, c) 	do { \
+							(void)h; \
+							(void)b; \
+							(void)e; \
+							(void)t; \
+							mm_ioctl_alloc_fail(s, c); \
+						} while (0)
+#else
 void mm_ioctl_alloc_fail(size_t size);
 #define mm_manage_alloc_fail(h, b, e, s, t) 	do { \
 							(void)h; \
@@ -737,8 +753,13 @@ void mm_ioctl_alloc_fail(size_t size);
 							(void)t; \
 							mm_ioctl_alloc_fail(s); \
 						} while (0)
+#endif
 #else
-void mm_manage_alloc_fail(struct mm_heap_s *heap, int startidx, int endidx, size_t size, int heap_type);
+void mm_manage_alloc_fail(struct mm_heap_s *heap, int startidx, int endidx, size_t size, int heap_type
+#ifdef CONFIG_DEBUG_MM_HEAPINFO
+		, uint32_t caller
+#endif
+		);
 #endif
 
 #if CONFIG_KMM_NHEAPS > 1

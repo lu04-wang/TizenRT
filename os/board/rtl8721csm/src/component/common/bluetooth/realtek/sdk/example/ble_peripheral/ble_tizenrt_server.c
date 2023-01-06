@@ -23,6 +23,8 @@ bool is_server_init = false;
 uint16_t server_profile_count = 0;
 trble_server_init_config server_init_parm;
 bool (*ble_tizenrt_server_send_msg)(uint16_t sub_type, void *arg) = NULL;
+T_SEND_DATA_RESULT *send_indication_result = NULL;
+extern T_GAP_DEV_STATE ble_tizenrt_scatternet_gap_dev_state;
 
 trble_result_e rtw_ble_server_init(trble_server_init_config* init_parm)
 {
@@ -234,12 +236,95 @@ trble_result_e rtw_ble_server_charact_notify(trble_attr_handle attr_handle, trbl
     param->att_handle = attr_handle;
     if(ble_tizenrt_server_send_msg(BLE_TIZENRT_MSG_NOTIFY, param) == false)
     {
-        os_mem_free(param);
         os_mem_free(param->data);
+        os_mem_free(param);
         debug_print("msg send fail \n");
         return TRBLE_FAIL;
     }
     return TRBLE_SUCCESS;
+}
+
+#if defined(CONFIG_BLE_INDICATION)
+void *ble_tizenrt_indicate_sem = NULL;
+#endif
+trble_result_e rtw_ble_server_charact_indicate(trble_attr_handle attr_handle, trble_conn_handle con_handle, uint8_t *data_ptr, uint16_t data_length)
+{
+    debug_print("send indicate abs_handle 0x%x \n", attr_handle);
+    if (is_server_init != true)
+    {
+        return TRBLE_INVALID_STATE;
+    }
+
+    if (attr_handle == 0x0000) /* invalid attr_handle */
+    {
+        return TRBLE_NOT_FOUND;
+    }
+
+#if defined(CONFIG_BLE_INDICATION)
+    if(ble_tizenrt_indicate_sem == NULL)
+    {
+        if(false == os_mutex_create(&ble_tizenrt_indicate_sem))
+        {
+            dbg("creat indication mutex fail! \n");
+            return TRBLE_FAIL;
+        } else {
+            debug_print("creat indication mutex 0x%x success \n", ble_tizenrt_indicate_sem);
+        }
+    }
+#endif
+
+    T_TIZENRT_NOTIFY_PARAM *param = os_mem_alloc(0, sizeof(T_TIZENRT_INDICATE_PARAM));;
+    if(!param)
+    {
+        debug_print("Memory allocation failed \n");
+        return TRBLE_FAIL;
+    }
+    param->data = os_mem_alloc(0, data_length);
+    if(!param->data)
+    {
+        os_mem_free(param);
+        debug_print("Memory allocation failed \n");
+        return TRBLE_FAIL;
+    }
+
+    memcpy(param->data, data_ptr, data_length);
+    param->len = data_length;
+    param->conn_id = con_handle;
+    param->att_handle = attr_handle;
+    if(ble_tizenrt_server_send_msg(BLE_TIZENRT_MSG_INDICATE, param) == false)
+    {
+        os_mem_free(param->data);
+        os_mem_free(param);
+        debug_print("msg send fail \n");
+        return TRBLE_FAIL;
+    }
+
+#if defined(CONFIG_BLE_INDICATION)
+    send_indication_result->cause = 0xFF;
+    int wticks = 0;
+    while(wticks++ < 30)
+    {
+        debug_print("wticks %d \n", wticks);
+        if(os_mutex_take(ble_tizenrt_indicate_sem, 1000))
+        {
+            debug_print("take indicate mutex success \n");
+            debug_print("conn_id %d att_handle 0x%x! \n", con_handle, attr_handle);
+            os_mutex_delete(ble_tizenrt_indicate_sem);
+            ble_tizenrt_indicate_sem = NULL;
+            if(send_indication_result->cause == GAP_SUCCESS)
+            {
+                debug_print("send indicate success \n");
+                return TRBLE_SUCCESS;
+            } else {
+                debug_print("send indicate fail \n");
+                return TRBLE_FAIL;
+            }
+        }
+    }
+    return TRBLE_FAIL;
+#else
+    return TRBLE_SUCCESS;
+#endif
 }
 
 trble_result_e rtw_ble_server_reject(trble_attr_handle attr_handle, uint8_t app_errorcode)
@@ -453,13 +538,16 @@ trble_result_e rtw_ble_server_disconnect(trble_conn_handle con_handle)
         return TRBLE_INVALID_STATE;
     }
 
-    if (con_handle != 0)
+    trble_conn_handle *conn_id = os_mem_alloc(0, sizeof(trble_conn_handle));
+    if(conn_id == NULL)
     {
-        return TRBLE_NOT_FOUND;
+        debug_print("\n[%s] Memory allocation failed \n");
+        return TRBLE_FAIL;
     }
-
-    if(ble_tizenrt_server_send_msg(BLE_TIZENRT_MSG_DISCONNECT, NULL) == false)
+    *conn_id = con_handle;
+    if(ble_tizenrt_server_send_msg(BLE_TIZENRT_MSG_DISCONNECT, conn_id) == false)
     {
+        os_mem_free(conn_id);
         debug_print("msg send fail \n");
         return TRBLE_FAIL;
     }
@@ -477,7 +565,15 @@ trble_result_e rtw_ble_server_start_adv(void)
         {
             le_get_conn_info(i, &conn_info);
             if(conn_info.role == GAP_LINK_ROLE_SLAVE)
-                return TRBLE_FAIL;
+            {
+                trble_adv_type_e adv_evt_type;
+                T_GAP_CAUSE ret;
+                ret = le_adv_get_param(GAP_PARAM_ADV_EVENT_TYPE, (void *)&adv_evt_type);
+                if (adv_evt_type != TRBLE_ADV_TYPE_NONCONN_IND || ret != GAP_CAUSE_SUCCESS)
+                {
+                    return TRBLE_FAIL;
+                }
+            }
         }
     }
 
@@ -507,6 +603,11 @@ trble_result_e rtw_ble_server_start_adv(void)
     {   
         debug_print("Waiting for adv start \n");
         os_delay(100);
+        if (ble_tizenrt_scatternet_gap_dev_state.gap_adv_sub_state == GAP_ADV_TO_IDLE_CAUSE_CONN)
+        {
+            ble_tizenrt_scatternet_gap_dev_state.gap_adv_sub_state = GAP_ADV_TO_IDLE_CAUSE_STOP;
+            break;
+        }
         le_get_gap_param(GAP_PARAM_DEV_STATE , &new_state);
     } while(new_state.gap_adv_state != GAP_ADV_STATE_ADVERTISING);
 
@@ -628,6 +729,14 @@ int rtw_ble_server_set_adv_interval(unsigned int interval)
     uint16_t adv_int = interval;
     le_adv_set_param(GAP_PARAM_ADV_INTERVAL_MIN, sizeof(adv_int), &adv_int);
     le_adv_set_param(GAP_PARAM_ADV_INTERVAL_MAX, sizeof(adv_int), &adv_int);
+    return TRBLE_SUCCESS;
+}
+
+int rtw_ble_server_set_adv_txpower(unsigned int txpower)
+{
+
+    uint16_t tx_gain = txpower;
+    le_adv_set_tx_power(0, tx_gain);
     return TRBLE_SUCCESS;
 }
 

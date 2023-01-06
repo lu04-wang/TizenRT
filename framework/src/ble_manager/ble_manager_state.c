@@ -138,6 +138,16 @@ static void _event_caller(int evt_pri, void *data) {
 			
 			callback(msg->param[1], attr_handle, read_result);
 		} break;
+		case BLE_EVT_CLIENT_INDI: {
+			ble_client_operation_indication_cb callback = msg->param[0];
+			ble_attr_handle attr_handle = *(ble_attr_handle *)(msg->param[2] + sizeof(ble_conn_handle));
+
+			ble_data read_result[1];
+			read_result->length = *(uint16_t *)(msg->param[2] + sizeof(ble_conn_handle) + sizeof(ble_attr_handle));
+			read_result->data = (uint8_t *)(msg->param[2] + sizeof(ble_conn_handle) + sizeof(ble_attr_handle) + sizeof(read_result->length));
+			
+			callback(msg->param[1], attr_handle, read_result);
+		} break;
 		case BLE_EVT_SCAN_STATE: {
 			ble_scan_state_e state = *(ble_scan_state_e *)msg->param[2];
 			ble_client_scan_state_changed_cb callback = msg->param[0];
@@ -573,7 +583,7 @@ ble_result_e blemgr_handle_request(blemgr_msg_s *msg)
 			break;
 		}
 
-		if (ctx->mqfd < 0) {
+		if (ctx->mqfd == (mqd_t)ERROR) {
 			ret = TRBLE_INVALID_STATE;
 			break;
 		}
@@ -714,6 +724,54 @@ ble_result_e blemgr_handle_request(blemgr_msg_s *msg)
 		ret = ble_drv_operation_enable_notification(handle);
 	} break;
 
+	case BLE_CMD_OP_ENABLE_INDICATE: {
+		BLE_STATE_CHECK;
+
+		blemgr_msg_params *param = (blemgr_msg_params *)msg->param;
+		ble_client_ctx *ctx = (ble_client_ctx *)param->param[0];
+		ble_attr_handle attr_handle = *(ble_attr_handle *)param->param[1];
+
+		if (ctx == NULL) {
+			ret = TRBLE_INVALID_ARGS;
+			break;
+		}
+
+		if (ctx->state != BLE_CLIENT_CONNECTED) {
+			ret = TRBLE_INVALID_STATE;
+			break;
+		}
+
+		trble_operation_handle handle[1] = { 0, };
+		handle->conn_handle = ctx->conn_handle;
+		handle->attr_handle = attr_handle;
+
+		ret = ble_drv_operation_enable_indication(handle);
+	} break;
+
+	case BLE_CMD_OP_ENABLE_NOTI_AND_INDICATE: {
+		BLE_STATE_CHECK;
+
+		blemgr_msg_params *param = (blemgr_msg_params *)msg->param;
+		ble_client_ctx *ctx = (ble_client_ctx *)param->param[0];
+		ble_attr_handle attr_handle = *(ble_attr_handle *)param->param[1];
+
+		if (ctx == NULL) {
+			ret = TRBLE_INVALID_ARGS;
+			break;
+		}
+
+		if (ctx->state != BLE_CLIENT_CONNECTED) {
+			ret = TRBLE_INVALID_STATE;
+			break;
+		}
+
+		trble_operation_handle handle[1] = { 0, };
+		handle->conn_handle = ctx->conn_handle;
+		handle->attr_handle = attr_handle;
+
+		ret = ble_drv_operation_enable_notification_and_indication(handle);
+	} break;
+
 	case BLE_CMD_OP_READ: {
 		BLE_STATE_CHECK;
 
@@ -808,6 +866,17 @@ ble_result_e blemgr_handle_request(blemgr_msg_s *msg)
 		ret = ble_drv_charact_notify(attr_handle, con_handle, data);
 	} break;
 
+	case BLE_CMD_CHARACT_INDI: {
+		BLE_STATE_CHECK;
+
+		blemgr_msg_params *param = (blemgr_msg_params *)msg->param;
+		trble_attr_handle attr_handle = *(trble_attr_handle *)param->param[0];
+		trble_conn_handle con_handle = *(trble_conn_handle *)param->param[1];
+		trble_data *data = (trble_data *)param->param[2];
+
+		ret = ble_drv_charact_indicate(attr_handle, con_handle, data);
+	} break;
+
 	case BLE_CMD_ATTR_SET_DATA: {
 		BLE_STATE_CHECK;
 
@@ -893,6 +962,13 @@ ble_result_e blemgr_handle_request(blemgr_msg_s *msg)
 
 		uint16_t interval = *(uint16_t *)msg->param;
 		ret = ble_drv_set_adv_interval(interval);
+	} break;
+
+	case BLE_CMD_SET_ADV_TXPOWER: {
+		BLE_STATE_CHECK;
+
+		uint8_t txpower = *(uint8_t *)msg->param;
+		ret = ble_drv_set_adv_txpower(txpower);
 	} break;
 
 	case BLE_CMD_START_ADV: {
@@ -1023,6 +1099,27 @@ ble_result_e blemgr_handle_request(blemgr_msg_s *msg)
 
 		if (ctx && ctx->callbacks.notification_cb) {
 			memcpy(queue_msg.param, (void*[]){ctx->callbacks.notification_cb, ctx, msg->param}, sizeof(void*) * queue_msg.count);
+			ble_queue_enque(BLE_QUEUE_EVT_PRI_HIGH, &queue_msg);
+		}
+	} break;
+
+    case BLE_EVT_CLIENT_INDI: {
+		if (msg->param == NULL) {
+			break;
+		}
+		int i;
+		ble_client_ctx_internal *ctx = NULL;
+		ble_conn_handle conn_handle = *(ble_conn_handle *)msg->param;
+
+		for (i = 0; i < BLE_MAX_CONNECTION_COUNT; i++) {
+			if (g_client_table[i].conn_handle == conn_handle) {
+				ctx = &g_client_table[i];
+				break;
+			}
+		}
+
+		if (ctx && ctx->callbacks.indication_cb) {
+			memcpy(queue_msg.param, (void*[]){ctx->callbacks.indication_cb, ctx, msg->param}, sizeof(void*) * queue_msg.count);
 			ble_queue_enque(BLE_QUEUE_EVT_PRI_HIGH, &queue_msg);
 		}
 	} break;

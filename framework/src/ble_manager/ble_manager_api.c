@@ -262,6 +262,24 @@ ble_result_e ble_client_operation_enable_notification(ble_client_ctx *ctx, ble_a
 	RETURN_RESULT(res, msg);
 }
 
+ble_result_e ble_client_operation_enable_indication(ble_client_ctx *ctx, ble_attr_handle attr_handle)
+{
+	blemgr_msg_params param = { 2, {(void *)ctx, (void *)&attr_handle} };
+	blemgr_msg_s msg = {BLE_CMD_OP_ENABLE_INDICATE, BLE_MANAGER_FAIL, (void *)(&param), NULL};
+	int res = blemgr_post_message(&msg);
+
+	RETURN_RESULT(res, msg);
+}
+
+ble_result_e ble_client_operation_enable_notification_and_indication(ble_client_ctx *ctx, ble_attr_handle attr_handle)
+{
+	blemgr_msg_params param = { 2, {(void *)ctx, (void *)&attr_handle} };
+	blemgr_msg_s msg = {BLE_CMD_OP_ENABLE_NOTI_AND_INDICATE, BLE_MANAGER_FAIL, (void *)(&param), NULL};
+	int res = blemgr_post_message(&msg);
+
+	RETURN_RESULT(res, msg);
+}
+
 ble_result_e ble_client_operation_read(ble_client_ctx *ctx, ble_attr_handle attr_handle, ble_data *data)
 {
 	blemgr_msg_params param = { 3, {(void *)ctx, (void *)&attr_handle, (void *)data} };
@@ -302,6 +320,15 @@ ble_result_e ble_server_charact_notify(ble_attr_handle attr_handle, ble_conn_han
 {
 	blemgr_msg_params param = { 3, {(void *)&attr_handle, (void *)&con_handle, (void *)data} };
 	blemgr_msg_s msg = {BLE_CMD_CHARACT_NOTI, BLE_MANAGER_FAIL, (void *)(&param), NULL};
+	int res = blemgr_post_message(&msg);
+
+	RETURN_RESULT(res, msg);
+}
+
+ble_result_e ble_server_charact_indicate(ble_attr_handle attr_handle, ble_conn_handle con_handle, ble_data *data)
+{
+	blemgr_msg_params param = { 3, {(void *)&attr_handle, (void *)&con_handle, (void *)data} };
+	blemgr_msg_s msg = {BLE_CMD_CHARACT_INDI, BLE_MANAGER_FAIL, (void *)(&param), NULL};
 	int res = blemgr_post_message(&msg);
 
 	RETURN_RESULT(res, msg);
@@ -388,6 +415,14 @@ ble_result_e ble_server_set_adv_type(ble_adv_type_e adv_type, ble_addr *addr)
 ble_result_e ble_server_set_adv_interval(unsigned int interval)
 {
 	blemgr_msg_s msg = {BLE_CMD_SET_ADV_INTERVAL, BLE_MANAGER_FAIL, (void *)(&interval), NULL};
+	int res = blemgr_post_message(&msg);
+
+	RETURN_RESULT(res, msg);
+}
+
+ble_result_e ble_server_set_adv_tx_power(uint8_t txpower)
+{
+	blemgr_msg_s msg = {BLE_CMD_SET_ADV_TXPOWER, BLE_MANAGER_FAIL, (void *)(&txpower), NULL};
 	int res = blemgr_post_message(&msg);
 
 	RETURN_RESULT(res, msg);

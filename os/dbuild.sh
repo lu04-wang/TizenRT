@@ -26,7 +26,7 @@ BINDIR="${BUILDDIR}/output/bin"
 CONFIGDIR="${BUILDDIR}/configs"
 DOCKER_VERSION="1.5.5"
 
-STATUS_LIST="NOT_CONFIGURED BOARD_CONFIGURED CONFIGURED BUILT PREPARE_DL DOWNLOAD"
+STATUS_LIST="NOT_CONFIGURED BOARD_CONFIGURED CONFIGURED BUILT PREPARE_DL DOWNLOAD_READY"
 BUILD_CMD=make
 
 # Checking docker is installed
@@ -84,6 +84,8 @@ function FIND_BINFILE()
 			BINFILE="${BINDIR}/tinyara_master_strip"
 		elif [[ "${CONFIG_ARCH_BOARD}" == "rtl8721csm" ]]; then
 			BINFILE="${BINDIR}/${KERNEL_BIN_NAME}"
+		elif [[ "${CONFIG_ARCH_BOARD}" == "rtl8720e" ]]; then
+			BINFILE="${BINDIR}/${KERNEL_BIN_NAME}"
 		else
 			BINFILE="${BINDIR}/tinyara${EXTNAME}"
 		fi
@@ -101,11 +103,11 @@ function SELECT_OPTION()
 			echo ======================================================
 			echo "  \"Select build Option\""
 			echo ======================================================
-			echo "  \"1. Build with Current Configurations\""
+			echo "  \"1. Build with Current Configuration\""
 			echo "  \"2. Re-configure\""
-			echo "  \"3. Menuconfig\""
-			echo "  \"4. Build Clean\""
-			echo "  \"5. Build Dist-Clean\""
+			echo "  \"3. Modify Current Configuration\""
+			echo "  \"4. Clean Build\""
+			echo "  \"5. Clean Build and Re-Configure\""
 			echo "  \"6. Build SmartFS Image\""
 			if [ "${STATUS}" == "BUILT" ]; then
 				echo "  \"d. Download\""
@@ -164,7 +166,7 @@ function SELECT_OPTION()
 
 function BUILD_TEST()
 {
-	# excute a shell script for build test
+	# execute a shell script for build test
 	pushd ${OSDIR} > /dev/null
 	docker run --rm ${DOCKER_OPT} -v ${TOPDIR}:/root/tizenrt -w /root/tizenrt/os --privileged tizenrt/tizenrt:${DOCKER_VERSION} bash -c "./tools/build_test.sh"
 	popd > /dev/null
@@ -216,23 +218,23 @@ function SELECT_BOARD()
 		read SELECTED_BOARD
 	fi
 
-	# treate "test"
+	# treat "test"
 	if [ "${SELECTED_BOARD}" == "t" -o "${SELECTED_BOARD}" == "test" -o "${SELECTED_BOARD}" == "TEST" ]; then
 		BUILD_TEST
 		exit 1
 	fi
 
-	# treate "exit"
+	# treat "exit"
 	if [ "${SELECTED_BOARD}" == "x" -o "${SELECTED_BOARD}" == "exit" -o "${SELECTED_BOARD}" == "EXIT" ]; then
 		exit 1
 	fi
 
-	# treate selected number
+	# treat selected number
 	if [ ! -z ${BOARDNAME_STR[${SELECTED_BOARD}]} ]; then
 		BOARD=${BOARDNAME_STR[${SELECTED_BOARD}]}	
 	fi
 
-	# treate given board string
+	# treat given board string
 	if [ -z ${BOARD} ]; then
 		IDX=1
 		for BOARDNAME_MEMBER in ${BOARDNAME_STR[@]}; do
@@ -284,18 +286,18 @@ function SELECT_CONFIG()
 		read SELECTED_CONFIG
 	fi
 
-	# treate "exit"
+	# treat "exit"
 	if [ "${SELECTED_CONFIG}" == "x" -o "${SELECTED_CONFIG}" == "exit" -o "${SELECTED_CONFIG}" == "EXIT" ]; then
 		exit 0
 	fi
 
-	# treate selected number
+	# treat selected number
 	if [ ! -z ${CONFIGNAME_STR[${SELECTED_CONFIG}]} ]; then
 		CONFIG=${CONFIGNAME_STR[${SELECTED_CONFIG}]}
 		
 	fi
 
-	# treate given config string
+	# treat given config string
 	if [ -z ${CONFIG} ]; then
 		IDX=1
 		for CONFIGNAME_MEMBER in ${CONFIGNAME_STR[@]}; do
@@ -372,6 +374,21 @@ function SELECT_DL
 		echo "  \"x. Exit\""
 		echo ==================================================
 		read SELECTED_DL
+
+		if [ "${command[$SELECTED_DL - 1]}" == "ERASE SS" ]; then
+			echo -n "Warning, this will erase important data (Secure storage). Press 'y' or 'n' to continue : "
+			read PROCEED
+			if [ "$PROCEED" != "y" ]; then
+				exit 1
+			fi
+		fi
+		if [ "${command[$SELECTED_DL - 1]}" == "ERASE USERFS" ]; then
+                        echo -n "Warning, this will erase important data (User data). Press 'y' or 'n' to continue : "
+                        read PROCEED
+                        if [ "$PROCEED" != "y" ]; then
+                                exit 1
+                        fi
+                fi
 	fi
 
 	for ((i=1;i<=${#command[@]};i++)); do
@@ -390,7 +407,7 @@ function SELECT_DL
 	esac
 
 	if [ ! -z "${DL_ARG}" ]; then
-		STATUS=DOWNLOAD
+		STATUS=DOWNLOAD_READY
 	fi
 }
 
@@ -407,7 +424,6 @@ function DOWNLOAD()
 	docker run --rm ${DOCKER_OPT} -v ${TOPDIR}:/root/tizenrt -w /root/tizenrt/os --privileged tizenrt/tizenrt:${DOCKER_VERSION} ${BUILD_CMD} download $1 $2 $3 $4 $5 $6
 	popd > /dev/null
 
-	exit 0
 }
 
 function UPDATE_STATUS()
@@ -461,7 +477,7 @@ function BUILD()
 
 function MENU()
 {
-	while [ "${STATUS}" != "DOWNLOAD" ]; do
+	while [ 1 ]; do
 		case ${STATUS} in
 		NOT_CONFIGURED)
 			SELECT_BOARD
@@ -472,6 +488,10 @@ function MENU()
 			;;
 		PREPARE_DL)
 			SELECT_DL
+			;;
+		DOWNLOAD_READY)
+			DOWNLOAD ${DL_ARG}
+			STATUS=BUILT
 			;;
 		*)
 			echo "Invalid Status!! ${STATUS}"
@@ -494,7 +514,7 @@ elif [ "$1" == "menu" ]; then
 	MENU
 else
 	while test $# -gt 0; do
-		if [ "${STATUS}" == "PREPARE_DL" -o "${STATUS}" == "DOWNLOAD" ]; then
+		if [ "${STATUS}" == "PREPARE_DL" -o "${STATUS}" == "DOWNLOAD_READY" ]; then
 			if [ "$1" == "all" ]; then
 				ARG=$(echo $1 | tr '[:lower:]' '[:upper:]')
 			else
@@ -513,9 +533,9 @@ else
 		CONFIGURED|BUILT)
 			SELECT_OPTION ${ARG}
 			;;
-		PREPARE_DL|DOWNLOAD)
+		PREPARE_DL|DOWNLOAD_READY)
 			DL_ARG+="${ARG} "
-			STATUS=DOWNLOAD
+			STATUS=DOWNLOAD_READY
 			;;
 		*)
 			echo "Invalid Status!! ${STATUS}"
@@ -526,7 +546,7 @@ else
 	done
 fi
 
-if [ "${STATUS}" == "DOWNLOAD" ]; then
+if [ "${STATUS}" == "DOWNLOAD_READY" ]; then
 	DOWNLOAD ${DL_ARG}
 fi
 exit 0

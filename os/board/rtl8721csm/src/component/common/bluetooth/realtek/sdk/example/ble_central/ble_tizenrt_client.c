@@ -64,6 +64,7 @@ trble_result_e rtw_ble_client_init(trble_client_init_config* init_parm)
 	client_init_parm->trble_device_connected_cb = init_parm->trble_device_connected_cb;
 	client_init_parm->trble_device_disconnected_cb = init_parm->trble_device_disconnected_cb;
 	client_init_parm->trble_operation_notification_cb = init_parm->trble_operation_notification_cb;
+	client_init_parm->trble_operation_indication_cb = init_parm->trble_operation_indication_cb;
 
     write_request_result = &g_write_result;
     write_no_rsponse_result = &g_write_no_rsp_result;
@@ -88,7 +89,7 @@ trble_result_e rtw_ble_client_scan_whitelist_add(trble_addr *addr)
     {
         if(false == os_mutex_create(&ble_tizenrt_modify_whitelist_sem))
         {
-            printf("\create sem fail! \n");
+            debug_print("create sem fail! \n");
             return TRBLE_FAIL;
         } else {
             debug_print("create sem 0x%x success \n", ble_tizenrt_modify_whitelist_sem);
@@ -145,7 +146,7 @@ trble_result_e rtw_ble_client_scan_whitelist_delete(trble_addr *addr)
     {
         if(false == os_mutex_create(&ble_tizenrt_modify_whitelist_sem))
         {
-            printf("create sem fail! \n");
+            debug_print("create sem fail! \n");
             return TRBLE_FAIL;
         } else {
             debug_print("create sem 0x%x success \n", ble_tizenrt_modify_whitelist_sem);
@@ -202,7 +203,7 @@ trble_result_e rtw_ble_client_scan_whitelist_clear_all(void)
     {
         if (false == os_mutex_create(&ble_tizenrt_modify_whitelist_sem))
         {
-            printf("create sem fail! \n");
+            debug_print("create sem fail! \n");
             return TRBLE_FAIL;
         } else {
             debug_print("create sem 0x%x success \n", ble_tizenrt_modify_whitelist_sem);
@@ -307,7 +308,7 @@ trble_result_e rtw_ble_client_start_scan_with_filter(trble_scan_filter* scan_par
     if (scan_parm->raw_data_length != 0) {
         if(!le_scan_info_filter(true, 0, scan_parm->raw_data_length, scan_parm->raw_data))
         {
-            printf("set scan info fail !! \n");
+            debug_print("set scan info fail !! \n");
             return TRBLE_FAIL;
         } else {
             debug_print("set scan info success \n");
@@ -609,6 +610,8 @@ trble_result_e rtw_ble_client_operation_read(trble_operation_handle* handle, trb
         debug_print("msg send fail \n");
         return TRBLE_FAIL; 
     }
+
+	ble_read_results[handle->conn_handle].cause = 0xFF;
     int ticks = 0;
     while(ticks++ < 30)
     {
@@ -616,6 +619,8 @@ trble_result_e rtw_ble_client_operation_read(trble_operation_handle* handle, trb
         if(os_mutex_take(ble_tizenrt_read_sem, 1000))
         {  
             debug_print("take sema success \n");
+            os_mutex_delete(ble_tizenrt_read_sem);
+            ble_tizenrt_read_sem = NULL;
             if(ble_read_results[handle->conn_handle].cause == GAP_SUCCESS)
             {
                 out_data->length = ble_read_results[handle->conn_handle].read_data.length;
@@ -679,6 +684,8 @@ trble_result_e rtw_ble_client_operation_write(trble_operation_handle* handle, tr
         debug_print("msg send fail \n");
         return TRBLE_FAIL; 
     }
+
+	write_request_result->cause = 0xFF;
     int wticks = 0;
     while(wticks++ < 30)
     {
@@ -687,6 +694,8 @@ trble_result_e rtw_ble_client_operation_write(trble_operation_handle* handle, tr
         {  
             debug_print("take write mutex success \n");
             debug_print("conn_id %d att_handle 0x%x! \n", handle->conn_handle, handle->attr_handle);
+            os_mutex_delete(ble_tizenrt_write_sem);
+            ble_tizenrt_write_sem = NULL;
             if(write_request_result->cause == GAP_SUCCESS)
             {
                 debug_print("write_req success \n");
@@ -744,6 +753,7 @@ trble_result_e rtw_ble_client_operation_write_no_response(trble_operation_handle
         return TRBLE_FAIL; 
     }
 
+	write_no_rsponse_result->cause = 0xFF;
     int wticks = 0;
     while(wticks++ < 30)
     {
@@ -752,6 +762,8 @@ trble_result_e rtw_ble_client_operation_write_no_response(trble_operation_handle
         {
             debug_print("take write_no_rsp mutex success \n");
             debug_print("conn_id %d att_handle 0x%x! \n", handle->conn_handle, handle->attr_handle);
+            os_mutex_delete(ble_tizenrt_write_no_rsp_sem);
+            ble_tizenrt_write_no_rsp_sem = NULL;
             if(write_no_rsponse_result->cause == GAP_SUCCESS)
             {
                 debug_print("send write_cmd success \n");
@@ -784,6 +796,58 @@ trble_result_e rtw_ble_client_operation_enable_notification(trble_operation_hand
     }
 
     uint8_t val[2] = {0x1, 0x0};
+    trble_data in_data;
+    in_data.length = 2;
+    in_data.data = val;
+
+    return rtw_ble_client_operation_write(handle, &in_data);
+}
+
+trble_result_e rtw_ble_client_operation_enable_indication(trble_operation_handle* handle)
+{
+    if (handle == NULL)
+    {
+        return TRBLE_FAIL;
+    }
+
+    if(!le_get_active_link_num())
+    {
+        debug_print("No active connection \n");
+        return TRBLE_FAIL;
+    }
+
+    if (client_init_parm == NULL || client_init_parm->trble_operation_notification_cb == NULL)
+    {
+        return TRBLE_FAIL;
+    }
+
+    uint8_t val[2] = {0x2, 0x0};
+    trble_data in_data;
+    in_data.length = 2;
+    in_data.data = val;
+
+    return rtw_ble_client_operation_write(handle, &in_data);
+}
+
+trble_result_e rtw_ble_client_operation_enable_notification_and_indication(trble_operation_handle* handle)
+{
+    if (handle == NULL)
+    {
+        return TRBLE_FAIL;
+    }
+
+    if(!le_get_active_link_num())
+    {
+        debug_print("No active connection \n");
+        return TRBLE_FAIL;
+    }
+
+    if (client_init_parm == NULL || client_init_parm->trble_operation_notification_cb == NULL)
+    {
+        return TRBLE_FAIL;
+    }
+
+    uint8_t val[2] = {0x3, 0x0};
     trble_data in_data;
     in_data.length = 2;
     in_data.data = val;

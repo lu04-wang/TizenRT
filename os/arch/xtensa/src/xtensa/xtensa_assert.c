@@ -72,6 +72,8 @@
 #include "sched/sched.h"
 #include "xtensa.h"
 
+bool abort_mode = false;
+
 /****************************************************************************
  * Pre-processor Definitions
  ****************************************************************************/
@@ -80,6 +82,11 @@
 #ifndef CONFIG_USBDEV_TRACE
 #undef CONFIG_ARCH_USBDUMP
 #endif
+
+/****************************************************************************
+ * Public Variables
+ ****************************************************************************/
+char assert_info_str[CONFIG_STDIO_BUFFER_SIZE] = {'\0', };
 
 /****************************************************************************
  * Private Functions
@@ -168,6 +175,8 @@ void up_assert(const uint8_t *filename, int lineno)
 {
 	board_autoled_on(LED_ASSERTION);
 
+	abort_mode = true;
+
 #if defined(CONFIG_DEBUG)
 #if CONFIG_TASK_NAME_SIZE > 0 && defined(CONFIG_DEBUG_ERROR)
 	struct tcb_s *rtcb = this_task();
@@ -176,6 +185,11 @@ void up_assert(const uint8_t *filename, int lineno)
 	lldbg("Assertion failed at file:%s line: %d\n", filename, lineno);
 #endif
 #endif
+
+	/* Print the extra arguments (if any) from ASSERT_INFO macro */
+	if (assert_info_str[0]) {
+		lldbg("%s\n", assert_info_str);
+	}
 
 	xtensa_assert(EXIT_FAILURE);
 }
